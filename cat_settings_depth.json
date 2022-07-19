@@ -28,6 +28,11 @@
     "transformers_depth": true,
     "left_id": true,
     "keep_left_id": 36,
+    "inline_articles": false,
+    "hrefs_rbc": false,
+    "hrefs_all": false,
+    "sentence_count": false,
+    "picture_count": false,
     "train_settings": {
         "iterations": 10000,
         "loss_function": "MultiRMSE",

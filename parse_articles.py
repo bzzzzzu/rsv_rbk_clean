@@ -10,6 +10,7 @@ regex_data_type = regex.compile('data-type=".*?"')
 regex_data_category = regex.compile('data-category=".*?"')
 regex_data_agg = regex.compile('data-aggregator=".*?"')
 regex_content = regex.compile('content=".*?"')
+regex_rbc_href = regex.compile('href=".*?rbc[.]ru.*?"')
 
 def scan_dataset(dir):
     files = os.listdir(dir)
@@ -35,10 +36,16 @@ def scan_dataset(dir):
         og_type = ''
         og_url_type = ''
         ad_cat_id = 0
+        hrefs_rbc = 0
+        hrefs_all = 0
+        inline_articles = 0
+        picture_count = 0
 
         ignore_next_video = 0
         get_next_author_org = 0
         active_description = 0
+        main_block = 0
+        sentence_count = 0
 
         # line-by-line manual parsing
         for line in article_text:
@@ -106,6 +113,18 @@ def scan_dataset(dir):
             if "'cat_id':" in line:
                 ad_cat_id = str.split(line, ": ")[1]
 
+            if main_block:
+                if '<div class="article__inline-item">' in line:
+                    inline_articles = inline_articles + 1
+                if '<p>' in line:
+                    hrefs_rbc = hrefs_rbc + len(regex.findall(regex_rbc_href, line))
+                    hrefs_all = hrefs_all + line.count('href="')
+                    sentence_count = sentence_count + len(str.split(line, ". "))
+                if '<div class="gallery_vertical__item">' in line:
+                    picture_count = picture_count + 1
+                if '<div class="article__picture__wrap">' in line:
+                    picture_count = picture_count + 1
+
             # setting condition for later lines
             if '"/>' in line:
                 active_description = 0
@@ -114,13 +133,18 @@ def scan_dataset(dir):
                 ignore_next_video = 1
             if '<div itemprop="author" itemscope itemtype="https://schema.org/Organization">' in line:
                 get_next_author_org = 1
+            if '<div class="article__header__title">' in line:
+                main_block = 1
+            if '<div class="article__tabs-wrapper js-article-tabs-wrapper">' in line:
+                main_block = 0
 
         not_modified = (date_published == date_modified)
 
         data.append([final_id, final_len, final_word_count, final_index, data_type,
                      final_data_category, final_data_agg, author_org, not_modified,
                      meta_title, meta_description, meta_keywords, meta_copyright,
-                     og_type, og_url_type, ad_cat_id,])
+                     og_type, og_url_type, ad_cat_id, inline_articles, hrefs_rbc,
+                     hrefs_all, sentence_count, picture_count,])
 
         if i % 100 == 0:
             print(f'i: {i}, article id: {final_id}, article len: {final_len}')
@@ -131,12 +155,14 @@ data_train = scan_dataset('articles/train/')
 data_train = pd.DataFrame(data_train, columns=['left_id_24', 'article_len', 'article_word_count', 'data_index',
                                                'data_type', 'data_category', 'data_agg', 'author_org', 'not_modified',
                                                'meta_title', 'meta_description', 'meta_keywords', 'meta_copyright',
-                                               'og_type', 'og_url_type', 'ad_cat_id',])
+                                               'og_type', 'og_url_type', 'ad_cat_id', 'inline_articles', 'hrefs_rbc',
+                                               'hrefs_all', 'sentence_count', 'picture_count',])
 data_train.to_csv('article_parsing_data_train.csv', index=False)
 
 data_test = scan_dataset('articles/test/')
 data_test = pd.DataFrame(data_test, columns=['left_id_24', 'article_len', 'article_word_count', 'data_index',
                                              'data_type', 'data_category', 'data_agg', 'author_org', 'not_modified',
                                              'meta_title', 'meta_description', 'meta_keywords', 'meta_copyright',
-                                             'og_type', 'og_url_type', 'ad_cat_id',])
+                                             'og_type', 'og_url_type', 'ad_cat_id', 'inline_articles', 'hrefs_rbc',
+                                               'hrefs_all', 'sentence_count', 'picture_count',])
 data_test.to_csv('article_parsing_data_test.csv', index=False)

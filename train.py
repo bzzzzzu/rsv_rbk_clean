@@ -164,6 +164,16 @@ def prepare_dataset(train, test, settings):
 
         input_cols = input_cols + ['data_type']
         cat_feature_cols = cat_feature_cols + ['data_type']
+    if settings['inline_articles']:
+        input_cols = input_cols + ['inline_articles']
+    if settings['hrefs_rbc']:
+        input_cols = input_cols + ['hrefs_rbc']
+    if settings['hrefs_all']:
+        input_cols = input_cols + ['hrefs_all']
+    if settings['sentence_count']:
+        input_cols = input_cols + ['sentence_count']
+    if settings['picture_count']:
+        input_cols = input_cols + ['picture_count']
 
     if settings['left_id']:
         combined_data['left_id'] = combined_data['document_id'].apply(lambda x: x[0:8])
@@ -307,6 +317,8 @@ for target in train_targets:
         test_history = test_data[input_cols]
         test_pool = Pool(test_history, cat_features=cat_feature_cols)
         fold_test_result = model.predict(test_history)
+        if target == 'views':
+            fold_test_result[fold_test_result < 0] = 0
         test_result = test_result + fold_test_result
 
     has_val_score = np.where(cv_result != -1)[0]
