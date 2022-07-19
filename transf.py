@@ -35,7 +35,7 @@ def preprocess_function(examples):
     examples['meta_description'] = str.replace(examples['meta_description'], '"/>', '')
     examples['meta_keywords'] = str(examples['meta_keywords'])
 
-    train_string = examples['title'] + ". " + examples['meta_description']
+    train_string = examples['title'] + ". " + examples['meta_description'] + ". " + examples['meta_keywords']
 
     token_title = tokenizer(train_string, truncation=True, padding='max_length', max_length=max_length)
     token_title['label'] = float(label) / train_scale_label
