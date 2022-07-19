@@ -1,0 +1,7 @@
+requests
+pandas
+regex
+torch
+transformers
+scikit-learn
+catboost
