@@ -8,7 +8,7 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from sklearn.metrics import r2_score
 from sklearn.model_selection import StratifiedKFold
 
-rng_seed = 20
+rng_seed = 21
 
 def reset_rng():
     random.seed(rng_seed)
