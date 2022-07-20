@@ -34,8 +34,9 @@ def preprocess_function(examples):
     examples['meta_description'] = str.replace(examples['meta_description'], '\n', '')
     examples['meta_description'] = str.replace(examples['meta_description'], '"/>', '')
     examples['meta_keywords'] = str(examples['meta_keywords'])
+    examples['main_text'] = str(examples['main_text'])
 
-    train_string = examples['title'] + ". " + examples['meta_description'] + ". " + examples['meta_keywords']
+    train_string = examples['title'] + ". " + examples['meta_description'] + ". " + examples['main_text']
 
     token_title = tokenizer(train_string, truncation=True, padding='max_length', max_length=max_length)
     token_title['label'] = float(label) / train_scale_label
@@ -121,7 +122,7 @@ do_train = True
 do_predict = True
 
 train_objective = ['depth', 'full_reads_percent']
-max_length = 256
+max_length = 512
 batch_size = 16
 epochs = 4
 num_folds = 6
@@ -152,10 +153,11 @@ for objective in train_objective:
         num_train_epochs=epochs,
         evaluation_strategy="steps",
         save_strategy="steps",
-        eval_steps=200,
+        eval_steps=72,
         gradient_accumulation_steps=1,
-        logging_steps=100,
-        save_steps=200,
+        gradient_checkpointing=True,
+        logging_steps=72,
+        save_steps=72,
         save_total_limit=1,
         seed=rng_seed,
         data_seed=rng_seed,

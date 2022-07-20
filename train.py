@@ -70,22 +70,22 @@ def prepare_dataset(train, test, settings):
     train_data = pd.merge(train_data, article_parse_train, how='left', on='left_id_24')
     test_data = pd.merge(test_data, article_parse_test, how='left', on='left_id_24')
 
+    bert_depth = pd.read_csv('bert_depth_predict.csv')
+    train_data = pd.merge(train_data, bert_depth, how='left', on='document_id')
+
+    bert_depth_test = pd.read_csv('bert_depth_predict_test.csv')
+    test_data = pd.merge(test_data, bert_depth_test, how='left', on='document_id')
+
     if settings['transformers_depth']:
-        bert_depth = pd.read_csv('bert_depth_predict.csv')
-        train_data = pd.merge(train_data, bert_depth, how='left', on='document_id')
-
-        bert_depth_test = pd.read_csv('bert_depth_predict_test.csv')
-        test_data = pd.merge(test_data, bert_depth_test, how='left', on='document_id')
-
         input_cols = input_cols + ['depth_predict']
 
+    bert_full_reads = pd.read_csv('bert_full_reads_percent_predict.csv')
+    train_data = pd.merge(train_data, bert_full_reads, how='left', on='document_id')
+
+    bert_full_reads_test = pd.read_csv('bert_full_reads_percent_predict_test.csv')
+    test_data = pd.merge(test_data, bert_full_reads_test, how='left', on='document_id')
+
     if settings['transformers_full_reads_percent']:
-        bert_full_reads = pd.read_csv('bert_full_reads_percent_predict.csv')
-        train_data = pd.merge(train_data, bert_full_reads, how='left', on='document_id')
-
-        bert_full_reads_test = pd.read_csv('bert_full_reads_percent_predict_test.csv')
-        test_data = pd.merge(test_data, bert_full_reads_test, how='left', on='document_id')
-
         input_cols = input_cols + ['full_reads_percent_predict']
 
     # working on combined data for consistency in train-test feature labels
@@ -219,6 +219,13 @@ def prepare_dataset(train, test, settings):
         input_cols = input_cols + ['authors']
         cat_feature_cols = cat_feature_cols + ['authors']
 
+    if settings['keywords'] == 'onehot':
+        combined_data['meta_keywords'] = combined_data['meta_keywords'].apply(str_to_list)
+
+        combined_data, column_names = mlb_on_column(combined_data, 'meta_keywords', settings['keep_keywords'])
+
+        input_cols = input_cols + column_names
+
     train_data = combined_data.iloc[0:7000].copy().reset_index()
     test_data = combined_data.iloc[7000:10000].copy().reset_index()
 
@@ -321,13 +328,22 @@ for target in train_targets:
             fold_test_result[fold_test_result < 0] = 0
         test_result = test_result + fold_test_result
 
+    test_result = test_result / settings['num_folds']
     has_val_score = np.where(cv_result != -1)[0]
+
+    if settings['transformers_raw_mix']:
+        transformers_data = train_data[(target + '_predict')].iloc[has_val_score]
+        cv_result[has_val_score] = cv_result[has_val_score] * (1 - settings['transformers_raw_mix']) + transformers_data * settings['transformers_raw_mix']
+
+        transformers_test_data = test_data[(target + '_predict')]
+        test_result = test_result * (1 - settings['transformers_raw_mix']) + transformers_test_data * settings['transformers_raw_mix']
+
     cv_score = np.round(r2_score(train_data[target].iloc[has_val_score], cv_result[cv_result != -1]), 4)
     cv_results[target] = cv_score
+
     print(f'target: {target}, cv score: {cv_score}')
     print('-------------------')
 
-    test_result = test_result / settings['num_folds']
     sub[target] = test_result
 
 score_final = 0

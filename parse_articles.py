@@ -1,6 +1,7 @@
 import regex
 import os
 import pandas as pd
+import html
 
 regex_len = regex.compile('data-chars-length=".*?"')
 regex_id = regex.compile('data-id="[0-9a-f]{24}"')
@@ -40,6 +41,7 @@ def scan_dataset(dir):
         hrefs_all = 0
         inline_articles = 0
         picture_count = 0
+        main_text = ''
 
         ignore_next_video = 0
         get_next_author_org = 0
@@ -120,6 +122,9 @@ def scan_dataset(dir):
                     hrefs_rbc = hrefs_rbc + len(regex.findall(regex_rbc_href, line))
                     hrefs_all = hrefs_all + line.count('href="')
                     sentence_count = sentence_count + len(str.split(line, ". "))
+                    text_line = regex.sub('<[^<]+?>', '', line)
+                    text_line = html.unescape(text_line)
+                    main_text = main_text + ' ' + text_line
                 if '<div class="gallery_vertical__item">' in line:
                     picture_count = picture_count + 1
                 if '<div class="article__picture__wrap">' in line:
@@ -140,11 +145,14 @@ def scan_dataset(dir):
 
         not_modified = (date_published == date_modified)
 
+        meta_description = regex.sub('<[^<]+?>', '', meta_description)
+        meta_description = html.unescape(meta_description)
+
         data.append([final_id, final_len, final_word_count, final_index, data_type,
                      final_data_category, final_data_agg, author_org, not_modified,
                      meta_title, meta_description, meta_keywords, meta_copyright,
                      og_type, og_url_type, ad_cat_id, inline_articles, hrefs_rbc,
-                     hrefs_all, sentence_count, picture_count,])
+                     hrefs_all, sentence_count, picture_count, main_text,])
 
         if i % 100 == 0:
             print(f'i: {i}, article id: {final_id}, article len: {final_len}')
@@ -156,7 +164,7 @@ data_train = pd.DataFrame(data_train, columns=['left_id_24', 'article_len', 'art
                                                'data_type', 'data_category', 'data_agg', 'author_org', 'not_modified',
                                                'meta_title', 'meta_description', 'meta_keywords', 'meta_copyright',
                                                'og_type', 'og_url_type', 'ad_cat_id', 'inline_articles', 'hrefs_rbc',
-                                               'hrefs_all', 'sentence_count', 'picture_count',])
+                                               'hrefs_all', 'sentence_count', 'picture_count', 'main_text',])
 data_train.to_csv('article_parsing_data_train.csv', index=False)
 
 data_test = scan_dataset('articles/test/')
@@ -164,5 +172,5 @@ data_test = pd.DataFrame(data_test, columns=['left_id_24', 'article_len', 'artic
                                              'data_type', 'data_category', 'data_agg', 'author_org', 'not_modified',
                                              'meta_title', 'meta_description', 'meta_keywords', 'meta_copyright',
                                              'og_type', 'og_url_type', 'ad_cat_id', 'inline_articles', 'hrefs_rbc',
-                                               'hrefs_all', 'sentence_count', 'picture_count',])
+                                               'hrefs_all', 'sentence_count', 'picture_count', 'main_text',])
 data_test.to_csv('article_parsing_data_test.csv', index=False)
