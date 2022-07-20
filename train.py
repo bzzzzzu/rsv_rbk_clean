@@ -10,12 +10,12 @@ from sklearn.model_selection import StratifiedKFold
 
 rng_seed = 20
 
-def reset_rng():
+def reset_rng(rng_seed):
     random.seed(rng_seed)
     np.random.seed(rng_seed)
     np.set_printoptions(precision=4, suppress=True)
 
-reset_rng()
+reset_rng(rng_seed)
 
 
 def str_to_list(input):
@@ -271,88 +271,103 @@ train_targets = {
     'depth': 'cat_settings_depth.json',
     'full_reads_percent': 'cat_settings_full_reads_percent.json',
 }
+rng_seeds = [0, 1, 2, 3, 4]
 
 sub = {}
-cv_results = {}
+cv_scores = {}
 for target in train_targets:
-    if not os.path.exists(f'models/catboost/{target}/'):
-        os.makedirs(f'models/catboost/{target}/')
 
-    with open(f'cat_settings_{target}.json', 'r') as jsf:
-        settings = json.load(jsf)
+    cv_results = []
+    test_results = []
 
-    train_data, test_data, input_cols, cat_feature_cols = prepare_dataset(train, test, settings)
+    for add_seed in rng_seeds:
+        if not os.path.exists(f'models/catboost/{target}/'):
+            os.makedirs(f'models/catboost/{target}/')
 
-    train_ids, val_ids = get_binned_folds(train_data, target, settings['num_folds'], settings['train_settings']['random_seed'])
+        with open(f'cat_settings_{target}.json', 'r') as jsf:
+            settings = json.load(jsf)
 
-    cv_result = np.zeros(7000) - 1
-    test_result = np.zeros(3000)
+        settings['train_settings']['random_seed'] = settings['train_settings']['random_seed'] + add_seed
+        reset_rng(settings['train_settings']['random_seed'])
 
-    for i in range(0, settings['num_folds']):
-        fold_train_data = train_data.loc[train_ids[i]]
-        fold_val_data = train_data.loc[val_ids[i]]
+        train_data, test_data, input_cols, cat_feature_cols = prepare_dataset(train, test, settings)
 
-        print(f'fold: {i}, input columns total: {len(input_cols)}, categorical columns total: {len(cat_feature_cols)}')
+        train_ids, val_ids = get_binned_folds(train_data, target, settings['num_folds'], settings['train_settings']['random_seed'])
 
-        fold_train_history = fold_train_data[input_cols]
-        fold_train_future = fold_train_data[target]
-        fold_val_history = fold_val_data[input_cols]
-        fold_val_future = fold_val_data[target]
+        cv_result = np.zeros(7000) - 1
+        test_result = np.zeros(3000)
 
-        ukr = np.array([2424, 4183, 5086, 5634, 5951, 6359])
-        print(f'ukrs in val: {list(set(ukr) & set(fold_val_data.index.values))}')
+        for i in range(0, settings['num_folds']):
+            fold_train_data = train_data.loc[train_ids[i]]
+            fold_val_data = train_data.loc[val_ids[i]]
 
-        model = CatBoostRegressor(**settings['train_settings'])
-        train_pool = Pool(fold_train_history, label=fold_train_future, cat_features=cat_feature_cols)
-        val_pool = Pool(fold_val_history, label=fold_val_future, cat_features=cat_feature_cols)
-        model.fit(X=train_pool, verbose=int(np.ceil(settings['train_settings']['iterations'] / 50)),
-                  eval_set=val_pool, use_best_model=True)
+            print(f'fold: {i}, input columns total: {len(input_cols)}, categorical columns total: {len(cat_feature_cols)}')
 
-        fold_result = model.predict(fold_val_history)
+            fold_train_history = fold_train_data[input_cols]
+            fold_train_future = fold_train_data[target]
+            fold_val_history = fold_val_data[input_cols]
+            fold_val_future = fold_val_data[target]
 
-        model.save_model(f'models/catboost/{target}/fold_{i}.cbm')
+            model = CatBoostRegressor(**settings['train_settings'])
+            train_pool = Pool(fold_train_history, label=fold_train_future, cat_features=cat_feature_cols)
+            val_pool = Pool(fold_val_history, label=fold_val_future, cat_features=cat_feature_cols)
+            model.fit(X=train_pool, verbose=int(np.ceil(settings['train_settings']['iterations'] / 50)),
+                      eval_set=val_pool, use_best_model=True)
 
-        if target == 'views':
-            fold_result[fold_result < 0] = 0
+            fold_result = model.predict(fold_val_history)
 
-        cv_result[val_ids[i]] = fold_result
+            model.save_model(f'models/catboost/{target}/fold_{i}.cbm')
 
-        fold_score = np.round(r2_score(fold_val_future, fold_result), 4)
-        print(f'target: {target}, fold score: {fold_score}')
+            if target == 'views':
+                fold_result[fold_result < 0] = 0
+
+            cv_result[val_ids[i]] = fold_result
+
+            fold_score = np.round(r2_score(fold_val_future, fold_result), 4)
+            print(f'target: {target}, seed: {settings["train_settings"]["random_seed"]}, fold: {i}, fold score: {fold_score}')
+            print('-------------------')
+
+            test_history = test_data[input_cols]
+            test_pool = Pool(test_history, cat_features=cat_feature_cols)
+            fold_test_result = model.predict(test_history)
+            if target == 'views':
+                fold_test_result[fold_test_result < 0] = 0
+            test_result = test_result + fold_test_result
+
+        test_result = test_result / settings['num_folds']
+        has_val_score = np.where(cv_result != -1)[0]
+
+        if settings['transformers_raw_mix']:
+            transformers_data = train_data[(target + '_predict')].iloc[has_val_score]
+            cv_result[has_val_score] = cv_result[has_val_score] * (1 - settings['transformers_raw_mix']) + transformers_data * settings['transformers_raw_mix']
+
+            transformers_test_data = test_data[(target + '_predict')]
+            test_result = test_result * (1 - settings['transformers_raw_mix']) + transformers_test_data * settings['transformers_raw_mix']
+
+        cv_results.append(cv_result)
+        test_results.append(test_result)
+
+        cv_score = np.round(r2_score(train_data[target].iloc[has_val_score], cv_result[cv_result != -1]), 4)
+
+        print(f'target: {target}, seed: {settings["train_settings"]["random_seed"]}, cv score: {cv_score}')
         print('-------------------')
 
-        test_history = test_data[input_cols]
-        test_pool = Pool(test_history, cat_features=cat_feature_cols)
-        fold_test_result = model.predict(test_history)
-        if target == 'views':
-            fold_test_result[fold_test_result < 0] = 0
-        test_result = test_result + fold_test_result
+    cv_results = np.mean(cv_results, axis=0)
+    test_results = np.mean(test_results, axis=0)
 
-    test_result = test_result / settings['num_folds']
-    has_val_score = np.where(cv_result != -1)[0]
+    has_val_score = np.where(cv_results != -1)[0]
+    cv_score = np.round(r2_score(train_data[target].iloc[has_val_score], cv_results[cv_results != -1]), 4)
+    cv_scores[target] = cv_score
 
-    if settings['transformers_raw_mix']:
-        transformers_data = train_data[(target + '_predict')].iloc[has_val_score]
-        cv_result[has_val_score] = cv_result[has_val_score] * (1 - settings['transformers_raw_mix']) + transformers_data * settings['transformers_raw_mix']
-
-        transformers_test_data = test_data[(target + '_predict')]
-        test_result = test_result * (1 - settings['transformers_raw_mix']) + transformers_test_data * settings['transformers_raw_mix']
-
-    cv_score = np.round(r2_score(train_data[target].iloc[has_val_score], cv_result[cv_result != -1]), 4)
-    cv_results[target] = cv_score
-
-    print(f'target: {target}, cv score: {cv_score}')
-    print('-------------------')
-
-    sub[target] = test_result
+    sub[target] = test_results
 
 score_final = 0
 for t in train_targets:
     if t == 'views':
-        score_final = score_final + cv_results[t] * 0.4
+        score_final = score_final + cv_scores[t] * 0.4
     if t == 'depth' or t == 'full_reads_percent':
-        score_final = score_final + cv_results[t] * 0.3
-    print(f'score for {t}: {cv_results[t]}')
+        score_final = score_final + cv_scores[t] * 0.3
+    print(f'score for {t}: {cv_scores[t]}')
 score_final = np.round(score_final, 4)
 print(f'final score: {score_final}')
 
