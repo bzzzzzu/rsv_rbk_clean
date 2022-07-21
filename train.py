@@ -40,7 +40,9 @@ def column_to_cat(data, col_name):
 def mlb_on_column(data, col_name, amount):
     mlb = MultiLabelBinarizer()
 
-    cols = mlb.fit_transform(data[col_name])
+    # fix statistics leak from test
+    mlb.fit_transform(data[col_name].iloc[0:7000])
+    cols = mlb.transform(data[col_name])
     cols_df = pd.DataFrame(cols, columns=mlb.classes_)
 
     if amount > 0:
@@ -349,6 +351,12 @@ for target in train_targets:
         has_val_score = np.where(cv_result != -1)[0]
 
         if settings['transformers_raw_mix']:
+            for mix in range(1, 30):
+                bert_result = train_data[(target + '_predict')].iloc[has_val_score]
+                cv_mix = cv_result[has_val_score] * (100 - mix) * 0.01 + bert_result[has_val_score] * mix * 0.01
+                cv_mix_score = np.round(r2_score(train_data[target].iloc[has_val_score], cv_mix), 4)
+                print(f'target: {target}, cv mix ({100 - mix}/{mix}): {cv_mix_score}')
+
             transformers_data = train_data[(target + '_predict')].iloc[has_val_score]
             cv_result[has_val_score] = cv_result[has_val_score] * (1 - settings['transformers_raw_mix']) + transformers_data * settings['transformers_raw_mix']
 
