@@ -10,7 +10,7 @@ from sklearn.model_selection import StratifiedKFold
 
 rng_seed = 21
 
-def reset_rng():
+def reset_rng(rng_seed):
     random.seed(rng_seed)
     np.random.seed(rng_seed)
     os.environ["PYTHONHASHSEED"] = str(rng_seed)
@@ -21,7 +21,7 @@ def reset_rng():
     torch.set_printoptions(precision=4, sci_mode=False)
     np.set_printoptions(precision=4, suppress=True)
 
-reset_rng()
+reset_rng(rng_seed)
 
 
 def preprocess_function(examples):
@@ -122,160 +122,166 @@ do_train = True
 do_predict = True
 
 train_objective = ['depth', 'full_reads_percent']
+rng_seeds = [20, 21, 22]
 max_length = 512
 batch_size = 16
 epochs = 4
 num_folds = 6
 
 for objective in train_objective:
-    # consistent results for training for single/multi target
-    reset_rng()
+    for seed in rng_seeds:
+        # consistent results for training for single/multi target
+        reset_rng(seed)
 
-    if objective == 'views':
-        learning_rate = 1e-5
-        train_scale_label = 100000
-        scale_depth = False
-    elif objective == 'depth':
-        learning_rate = 2e-5
-        train_scale_label = 1
-        scale_depth = True
-    elif objective == 'full_reads_percent':
-        learning_rate = 1e-5
-        train_scale_label = 50
-        scale_depth = False
+        if not os.path.exists(f'models/transformers/{seed}/'):
+            os.makedirs(f'models/transformers/{seed}/')
 
-    train_args = TrainingArguments(
-        output_dir="models/",
-        learning_rate=learning_rate,
-        lr_scheduler_type='cosine',
-        per_device_train_batch_size=batch_size,
-        per_device_eval_batch_size=batch_size,
-        num_train_epochs=epochs,
-        evaluation_strategy="steps",
-        save_strategy="steps",
-        eval_steps=72,
-        gradient_accumulation_steps=1,
-        gradient_checkpointing=True,
-        logging_steps=72,
-        save_steps=72,
-        save_total_limit=1,
-        seed=rng_seed,
-        data_seed=rng_seed,
-        metric_for_best_model="r2",
-        load_best_model_at_end=True,
-        weight_decay=0.01,
-        fp16=True,
-        disable_tqdm=True,
-        warmup_steps=400,
-    )
+        if objective == 'views':
+            learning_rate = 1e-5
+            train_scale_label = 100000
+            scale_depth = False
+        elif objective == 'depth':
+            learning_rate = 2e-5
+            train_scale_label = 1
+            scale_depth = True
+        elif objective == 'full_reads_percent':
+            learning_rate = 1e-5
+            train_scale_label = 50
+            scale_depth = False
 
-    tokenizer = AutoTokenizer.from_pretrained("sberbank-ai/ruBert-base")
-    tokenizer.model_max_length = max_length
+        train_args = TrainingArguments(
+            output_dir="models/",
+            learning_rate=learning_rate,
+            lr_scheduler_type='cosine',
+            per_device_train_batch_size=batch_size,
+            per_device_eval_batch_size=batch_size,
+            num_train_epochs=epochs,
+            evaluation_strategy="steps",
+            save_strategy="steps",
+            eval_steps=72,
+            gradient_accumulation_steps=1,
+            gradient_checkpointing=True,
+            logging_steps=72,
+            save_steps=72,
+            save_total_limit=1,
+            seed=rng_seed,
+            data_seed=rng_seed,
+            metric_for_best_model="r2",
+            load_best_model_at_end=True,
+            weight_decay=0.01,
+            fp16=True,
+            disable_tqdm=True,
+            warmup_steps=400,
+        )
 
-    # train data into transformer
-    train_data = train.copy()
-    train_data = train_data.apply(preprocess_function, axis=1)
+        tokenizer = AutoTokenizer.from_pretrained("sberbank-ai/ruBert-base")
+        tokenizer.model_max_length = max_length
 
-    train_ids, val_ids = get_binned_folds(train_data, num_folds, rng_seed)
+        # train data into transformer
+        train_data = train.copy()
+        train_data = train_data.apply(preprocess_function, axis=1)
 
-    if do_train:
-        for fold in range(num_folds):
-            train_fold = train_data.iloc[train_ids[fold]].to_list()
-            val_fold = train_data.iloc[val_ids[fold]].to_list()
+        train_ids, val_ids = get_binned_folds(train_data, num_folds, rng_seed)
 
-            model = AutoModelForSequenceClassification.from_pretrained("sberbank-ai/ruBert-base",
-                                                                       num_labels=1, problem_type='regression')
-            model.cuda()
-            model.train()
-
-            model_trainer = Trainer(
-                model=model,
-                args=train_args,
-                train_dataset=train_fold,
-                eval_dataset=val_fold,
-                compute_metrics=compute_r2,
-            )
-            model_trainer.train()
-            model_trainer.save_model(f'models/transformers/{objective}_fold_{fold}/')
-
-    if do_predict:
-        with torch.no_grad():
-            # empty columns for results
-            train[(objective + '_predict')] = np.zeros(train.shape[0])
-            test[(objective + '_predict')] = np.zeros(test.shape[0])
-
+        if do_train:
             for fold in range(num_folds):
+                train_fold = train_data.iloc[train_ids[fold]].to_list()
                 val_fold = train_data.iloc[val_ids[fold]].to_list()
 
-                model = AutoModelForSequenceClassification.from_pretrained(f'models/transformers/{objective}_fold_{fold}')
+                model = AutoModelForSequenceClassification.from_pretrained("sberbank-ai/ruBert-base",
+                                                                           num_labels=1, problem_type='regression')
                 model.cuda()
-                model.eval()
+                model.train()
 
-                # predicting train values on out-of-fold examples (1 model per example, sadly)
-                for i in range(0, len(val_fold)):
-                    v = val_fold[i].copy()
-                    del v['label']
+                model_trainer = Trainer(
+                    model=model,
+                    args=train_args,
+                    train_dataset=train_fold,
+                    eval_dataset=val_fold,
+                    compute_metrics=compute_r2,
+                )
+                model_trainer.train()
+                model_trainer.save_model(f'models/transformers/{seed}/{objective}_fold_{fold}/')
 
-                    v['input_ids'] = torch.tensor([v['input_ids']]).cuda()
-                    v['token_type_ids'] = torch.tensor([v['token_type_ids']]).cuda()
-                    v['attention_mask'] = torch.tensor([v['attention_mask']]).cuda()
+        if do_predict:
+            with torch.no_grad():
+                # empty columns for results
+                train[(objective + '_predict')] = np.zeros(train.shape[0])
+                test[(objective + '_predict')] = np.zeros(test.shape[0])
 
-                    logits = model(**v).logits.cpu().detach().numpy()[0]
-                    predict = logits * train_scale_label
+                for fold in range(num_folds):
+                    val_fold = train_data.iloc[val_ids[fold]].to_list()
 
-                    if i % 100 == 0:
-                        print(f'id: {val_ids[fold][i]}, text: {train.loc[val_ids[fold][i], "title"]},'
-                              f' truth: {train.loc[val_ids[fold][i], objective]}, predict: {predict}')
+                    model = AutoModelForSequenceClassification.from_pretrained(f'models/transformers/{seed}/{objective}_fold_{fold}')
+                    model.cuda()
+                    model.eval()
 
-                    # reverse scaling for depth
-                    if objective == 'depth':
-                        predict = predict / 4 + 1
-                        if train.loc[val_ids[fold][i], 'hourofyear'] >= 2365:
-                            predict -= np.mean(early_days_depth)
-                            predict /= np.std(early_days_depth)
-                            predict *= np.std(late_days_depth)
-                            predict += np.mean(late_days_depth)
+                    # predicting train values on out-of-fold examples (1 model per example, sadly)
+                    for i in range(0, len(val_fold)):
+                        v = val_fold[i].copy()
+                        del v['label']
 
-                    # saving results
-                    train.loc[val_ids[fold][i], (objective + '_predict')] = predict
+                        v['input_ids'] = torch.tensor([v['input_ids']]).cuda()
+                        v['token_type_ids'] = torch.tensor([v['token_type_ids']]).cuda()
+                        v['attention_mask'] = torch.tensor([v['attention_mask']]).cuda()
 
-                # predicting test values, average of all models (6 models per example)
-                test_data = test.copy()
-                test_data = test_data.apply(preprocess_function, axis=1)
+                        logits = model(**v).logits.cpu().detach().numpy()[0]
+                        predict = logits * train_scale_label
 
-                for i in range(0, len(test_data)):
-                    v = test_data[i].copy()
-                    del v['label']
+                        if i % 100 == 0:
+                            print(f'id: {val_ids[fold][i]}, text: {train.loc[val_ids[fold][i], "title"]},'
+                                  f' truth: {train.loc[val_ids[fold][i], objective]}, predict: {predict}')
 
-                    v['input_ids'] = torch.tensor([v['input_ids']]).cuda()
-                    v['token_type_ids'] = torch.tensor([v['token_type_ids']]).cuda()
-                    v['attention_mask'] = torch.tensor([v['attention_mask']]).cuda()
+                        # reverse scaling for depth
+                        if objective == 'depth':
+                            predict = predict / 4 + 1
+                            if train.loc[val_ids[fold][i], 'hourofyear'] >= 2365:
+                                predict -= np.mean(early_days_depth)
+                                predict /= np.std(early_days_depth)
+                                predict *= np.std(late_days_depth)
+                                predict += np.mean(late_days_depth)
 
-                    logits = model(**v).logits.cpu().detach().numpy()[0]
-                    predict = logits * train_scale_label
+                        # saving results
+                        train.loc[val_ids[fold][i], (objective + '_predict')] = predict
 
-                    # reverse scaling for depth
-                    if objective == 'depth':
-                        predict = predict / 4 + 1
-                        if test.loc[i, 'hourofyear'] >= 2365:
-                            predict -= np.mean(early_days_depth)
-                            predict /= np.std(early_days_depth)
-                            predict *= np.std(late_days_depth)
-                            predict += np.mean(late_days_depth)
+                    # predicting test values, average of all models (6 models per example)
+                    test_data = test.copy()
+                    test_data = test_data.apply(preprocess_function, axis=1)
 
-                    if i % 100 == 0:
-                        print(f'id: {i}, text: {test.loc[i, "title"]}, predict: {predict}')
+                    for i in range(0, len(test_data)):
+                        v = test_data[i].copy()
+                        del v['label']
 
-                    # saving results in sum
-                    test.loc[i, (objective + '_predict')] = test.loc[i, (objective + '_predict')] + predict
+                        v['input_ids'] = torch.tensor([v['input_ids']]).cuda()
+                        v['token_type_ids'] = torch.tensor([v['token_type_ids']]).cuda()
+                        v['attention_mask'] = torch.tensor([v['attention_mask']]).cuda()
 
-            # end of predict, saving to files
-            train_save = train[['document_id', (objective + '_predict')]]
-            train_save.to_csv(f'bert_{(objective + "_predict")}.csv', index=False)
+                        logits = model(**v).logits.cpu().detach().numpy()[0]
+                        predict = logits * train_scale_label
 
-            test_save = test[['document_id', (objective + '_predict')]]
-            test_save[(objective + "_predict")] = test_save[(objective + "_predict")] / num_folds
-            test_save.to_csv(f'bert_{(objective + "_predict")}_test.csv', index=False)
+                        # reverse scaling for depth
+                        if objective == 'depth':
+                            predict = predict / 4 + 1
+                            if test.loc[i, 'hourofyear'] >= 2365:
+                                predict -= np.mean(early_days_depth)
+                                predict /= np.std(early_days_depth)
+                                predict *= np.std(late_days_depth)
+                                predict += np.mean(late_days_depth)
+
+                        if i % 100 == 0:
+                            print(f'id: {i}, text: {test.loc[i, "title"]}, predict: {predict}')
+
+                        # saving results in sum
+                        test.loc[i, (objective + '_predict')] = test.loc[i, (objective + '_predict')] + predict
+
+                # end of predict, saving to files
+                train_save = train[['document_id', (objective + '_predict')]]
+                train_save.to_csv(f'bert_{(objective + "_predict")}_seed{seed}.csv', index=False)
+
+                test_save = test[['document_id', (objective + '_predict')]]
+                test_save[(objective + "_predict")] = test_save[(objective + "_predict")] / num_folds
+                test_save.to_csv(f'bert_{(objective + "_predict")}_test_seed{seed}.csv', index=False)
+
 
 
 

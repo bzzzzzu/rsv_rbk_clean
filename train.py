@@ -54,6 +54,19 @@ def mlb_on_column(data, col_name, amount):
     return data, column_names
 
 
+def read_multi_seeds(data, fname, col_name):
+    data[col_name] = np.zeros(data.shape[0])
+    num_seeds = 0
+    flist = os.listdir()
+    for f in flist:
+        if fname in f:
+            bert_depth = pd.read_csv(f)
+            data[col_name] = data[col_name] + bert_depth[col_name]
+            num_seeds = num_seeds + 1
+    if num_seeds > 0:
+        data[col_name] = data[col_name] / num_seeds
+
+
 def prepare_dataset(train, test, settings):
     train_data = train.copy()
     test_data = test.copy()
@@ -70,20 +83,18 @@ def prepare_dataset(train, test, settings):
     train_data = pd.merge(train_data, article_parse_train, how='left', on='left_id_24')
     test_data = pd.merge(test_data, article_parse_test, how='left', on='left_id_24')
 
-    bert_depth = pd.read_csv('bert_depth_predict.csv')
-    train_data = pd.merge(train_data, bert_depth, how='left', on='document_id')
-
-    bert_depth_test = pd.read_csv('bert_depth_predict_test.csv')
-    test_data = pd.merge(test_data, bert_depth_test, how='left', on='document_id')
+    read_multi_seeds(train_data, 'bert_depth_predict_seed', 'depth_predict')
+    train_data.loc[train_data['depth_predict'] == 0, 'depth_predict'] = 1
+    read_multi_seeds(test_data, 'bert_depth_predict_test_seed', 'depth_predict')
+    test_data.loc[test_data['depth_predict'] == 0, 'depth_predict'] = 1
 
     if settings['transformers_depth']:
         input_cols = input_cols + ['depth_predict']
 
-    bert_full_reads = pd.read_csv('bert_full_reads_percent_predict.csv')
-    train_data = pd.merge(train_data, bert_full_reads, how='left', on='document_id')
-
-    bert_full_reads_test = pd.read_csv('bert_full_reads_percent_predict_test.csv')
-    test_data = pd.merge(test_data, bert_full_reads_test, how='left', on='document_id')
+    read_multi_seeds(train_data, 'bert_full_reads_percent_predict_seed', 'full_reads_percent_predict')
+    train_data.loc[train_data['full_reads_percent_predict'] == 0, 'full_reads_percent_predict'] = 30
+    read_multi_seeds(test_data, 'bert_full_reads_percent_predict_test_seed', 'full_reads_percent_predict')
+    test_data.loc[test_data['full_reads_percent_predict'] == 0, 'full_reads_percent_predict'] = 30
 
     if settings['transformers_full_reads_percent']:
         input_cols = input_cols + ['full_reads_percent_predict']
@@ -281,14 +292,14 @@ for target in train_targets:
     test_results = []
 
     for add_seed in rng_seeds:
-        if not os.path.exists(f'models/catboost/{target}/'):
-            os.makedirs(f'models/catboost/{target}/')
-
         with open(f'cat_settings_{target}.json', 'r') as jsf:
             settings = json.load(jsf)
 
         settings['train_settings']['random_seed'] = settings['train_settings']['random_seed'] + add_seed
         reset_rng(settings['train_settings']['random_seed'])
+
+        if not os.path.exists(f'models/catboost/{settings["train_settings"]["random_seed"]}/{target}/'):
+            os.makedirs(f'models/catboost/{settings["train_settings"]["random_seed"]}/{target}/')
 
         train_data, test_data, input_cols, cat_feature_cols = prepare_dataset(train, test, settings)
 
@@ -316,7 +327,7 @@ for target in train_targets:
 
             fold_result = model.predict(fold_val_history)
 
-            model.save_model(f'models/catboost/{target}/fold_{i}.cbm')
+            model.save_model(f'models/catboost/{settings["train_settings"]["random_seed"]}/{target}/fold_{i}.cbm')
 
             if target == 'views':
                 fold_result[fold_result < 0] = 0
